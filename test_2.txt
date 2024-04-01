@@ -1,0 +1,27 @@
+
+	2020-04-09
+				
+	PRODUMAR CALIBRATION			
+				
+		SG = 	0.700	relative to water
+				
+		T = 	0.565	Sec
+		F = 	1.770	Hz
+				
+		Rotary Valve	0.095	Cu.Ft.
+		Conversion	28.317	L/Cu.Ft.
+		Rotary Valve	2.690	Litres
+		Rotary Valve	2.690	kg of water
+		Rotary Valve	1.883	kg of feed
+				
+		Chambers	8	#
+				
+		Chamber 	0.235	kg of Feed
+				
+		in one second	0.417	kg of Feed
+		in one minute	24.997	kg of Feed
+				
+	Therefore at 1.77 Hz 25 kg will be dispensed in 1 minute			
+				
+	And it does.			
+				

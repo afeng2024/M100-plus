@@ -1,0 +1,252 @@
+'===============================================================================
+' INITIALIZE EEPROM AND SCHEDULE BLOCK 	  *** USED FOR INITIAL SETUP PURPOSES ONLY ***
+'===============================================================================
+Sub Init_Schedule_and_EEprom()			' *** USED FOR INITIAL SETUP PURPOSES ONLY ***
+
+	ise_line			Var	Integer
+	ise_part_address	Var	Integer
+	ise_data			Var	Integer
+	ise_long			Var Long
+
+	time_of_day				= 0x1000	'INITIAL DEFAULT TIME = 10:00 (24 HRS)
+	time_of_day_seconds 	= 0x30		'INITIAL DEFAULT SECONDS = 30
+
+	Timeset TIME_SECONDS_BCD, 0
+	Timeset TIME_MINUTES_BCD, time_of_day.Byte0
+	Timeset TIME_HOURS_BCD,   time_of_day.Byte1
+
+
+Debug "LOADING SCHEDULE GROUP A",Cr
+
+	group_pointer = SCHEDULE_GROUP_A
+
+	schedule(SCHEDULE_STATE,     0, SCHEDULE_GROUP_A) = 0
+	schedule(SCHEDULE_START,     0, SCHEDULE_GROUP_A) = time_of_day
+	schedule(SCHEDULE_STOP,      0, SCHEDULE_GROUP_A) = time_of_day
+	schedule(SCHEDULE_PRESET,    0, SCHEDULE_GROUP_A) = 500				'KG/ROTATION
+	schedule(SCHEDULE_DELIVERED, 0, SCHEDULE_GROUP_A) = 0
+	schedule(SCHEDULE_TOTAL,     0, SCHEDULE_GROUP_A) = 0
+
+	For ise_line = 1 To SCHEDULE_LINE_MAX
+		schedule(SCHEDULE_STATE,    ise_line, SCHEDULE_GROUP_A) = 0
+		schedule(SCHEDULE_START,    ise_line, SCHEDULE_GROUP_A) = 0
+		schedule(SCHEDULE_STOP,     ise_line, SCHEDULE_GROUP_A) = 0
+		schedule(SCHEDULE_PRESET,   ise_line, SCHEDULE_GROUP_A) = 10 + ise_line
+		schedule(SCHEDULE_DELIVERED,ise_line, SCHEDULE_GROUP_A) = 100 + ise_line
+		schedule(SCHEDULE_TOTAL,    ise_line, SCHEDULE_GROUP_A) = 1000 + ise_line
+	Next
+
+Debug Cr
+Debug "SHOWING SCHEDULE GROUP A",Cr
+Debug "G  Ln  STATE  START  STOP  PRESET  DELIV  TOTAL", Cr
+
+	group_pointer = SCHEDULE_GROUP_A
+
+	For ise_line = 0 To SCHEDULE_LINE_MAX
+		Debug Dec SCHEDULE_GROUP_A, "  ", Dec2 ise_line
+		Debug "   ",  Dec4 schedule(SCHEDULE_STATE,    ise_line, SCHEDULE_GROUP_A)
+		Debug "   ",  Hex4 schedule(SCHEDULE_START,    ise_line, SCHEDULE_GROUP_A)
+		Debug "  ",   Hex4 schedule(SCHEDULE_STOP,     ise_line, SCHEDULE_GROUP_A)
+		Debug "    ", Dec4 schedule(SCHEDULE_PRESET,   ise_line, SCHEDULE_GROUP_A)
+		Debug "   ",  Dec4 schedule(SCHEDULE_DELIVERED,ise_line, SCHEDULE_GROUP_A)
+		Debug "   ",  Dec4 schedule(SCHEDULE_TOTAL,    ise_line, SCHEDULE_GROUP_A)
+		Debug Cr
+	Next
+
+Debug "LOADING SCHEDULE GROUP B",Cr
+
+	group_pointer = SCHEDULE_GROUP_B
+
+	schedule(SCHEDULE_STATE,     0, SCHEDULE_GROUP_B) = 0
+	schedule(SCHEDULE_START,     0, SCHEDULE_GROUP_B) = time_of_day
+	schedule(SCHEDULE_STOP,      0, SCHEDULE_GROUP_B) = time_of_day
+	schedule(SCHEDULE_PRESET,    0, SCHEDULE_GROUP_B) = 500				'KG/ROTATION
+	schedule(SCHEDULE_DELIVERED, 0, SCHEDULE_GROUP_B) = 0
+	schedule(SCHEDULE_TOTAL,     0, SCHEDULE_GROUP_B) = 0
+
+	For ise_line = 1 To SCHEDULE_LINE_MAX
+		schedule(SCHEDULE_STATE,    ise_line, SCHEDULE_GROUP_B) = 0
+		schedule(SCHEDULE_START,    ise_line, SCHEDULE_GROUP_B) = 0
+		schedule(SCHEDULE_STOP,     ise_line, SCHEDULE_GROUP_B) = 0
+		schedule(SCHEDULE_PRESET,   ise_line, SCHEDULE_GROUP_B) = 20 + ise_line
+		schedule(SCHEDULE_DELIVERED,ise_line, SCHEDULE_GROUP_B) = 200 + ise_line
+		schedule(SCHEDULE_TOTAL,    ise_line, SCHEDULE_GROUP_B) = 2000 + ise_line
+	Next
+
+Debug Cr
+Debug "SHOWING SCHEDULE GROUP B",Cr
+Debug "G  Ln  STATE  START  STOP  PRESET  DELIV  TOTAL", Cr
+
+	group_pointer = SCHEDULE_GROUP_B
+
+	For ise_line = 0 To SCHEDULE_LINE_MAX
+		Debug Dec SCHEDULE_GROUP_B, "  ", Dec2 ise_line
+		Debug "   ",  Dec4 schedule(SCHEDULE_STATE,    ise_line, SCHEDULE_GROUP_B)
+		Debug "   ",  Hex4 schedule(SCHEDULE_START,    ise_line, SCHEDULE_GROUP_B)
+		Debug "  ",   Hex4 schedule(SCHEDULE_STOP,     ise_line, SCHEDULE_GROUP_B)
+		Debug "    ", Dec4 schedule(SCHEDULE_PRESET,   ise_line, SCHEDULE_GROUP_B)
+		Debug "   ",  Dec4 schedule(SCHEDULE_DELIVERED,ise_line, SCHEDULE_GROUP_B)
+		Debug "   ",  Dec4 schedule(SCHEDULE_TOTAL,    ise_line, SCHEDULE_GROUP_B)
+		Debug Cr
+	Next
+
+
+Debug Cr
+Debug "WRITING/READING SCHEDULE GROUP A TO/FROM EEPROM",Cr
+
+	group_pointer = SCHEDULE_GROUP_A
+
+	For ise_line = 0 To SCHEDULE_LINE_MAX
+
+		ise_part_address = (ise_line + SCHEDULE_GROUP_A * SCHEDULE_LINES_PER_GROUP) * SCHEDULE_ELEMENTS_PER_LINE
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STATE + ise_part_address), _
+				 schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_START + ise_part_address), _
+				 schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STOP + ise_part_address), _
+				 schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_PRESET + ise_part_address), _
+				 schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_DELIVERED + ise_part_address), _
+				 schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_TOTAL + ise_part_address), _
+				 schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_A), _
+				 2
+
+		'THE FOLLOWING COULD BE DONE IN ONE-LESS CODE-LINE PER GROUP OF LINES BELOW
+		'BUT USING 3 LINES IS CLEARER AND, APPARENTLY, GIVES THE CB290 EEPROM TIME TO CATCH UP
+		'
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STATE + ise_part_address), 2 )
+		schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug "A= ", Dec4 schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_A)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_START + ise_part_address), 2 )
+		schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug " : ", Hex4 schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_A)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STOP + ise_part_address), 2 )
+		schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug " : ", Hex4 schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_A)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_PRESET + ise_part_address), 2 )
+		schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_A)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_DELIVERED + ise_part_address), 2 )
+		schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_A)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_TOTAL + ise_part_address), 2 )
+		schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_A) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_A)
+
+		Debug Cr
+
+	Next
+
+
+	'----------------------------------------------------------------------------
+
+Debug Cr
+Debug "WRITING/READING SCHEDULE GROUP B TO/FROM EEPROM",Cr
+
+	group_pointer = SCHEDULE_GROUP_B
+
+	For ise_line = 0 To SCHEDULE_LINE_MAX
+
+		ise_part_address = (ise_line + SCHEDULE_GROUP_B * SCHEDULE_LINES_PER_GROUP) * SCHEDULE_ELEMENTS_PER_LINE
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STATE + ise_part_address), _
+				 schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_START + ise_part_address), _
+				 schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STOP + ise_part_address), _
+				 schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_PRESET + ise_part_address), _
+				 schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_DELIVERED + ise_part_address), _
+				 schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		Eewrite  EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_TOTAL + ise_part_address), _
+				 schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_B), _
+				 2
+
+		'THE FOLLOWING COULD BE DONE IN ONE-LESS CODE-LINE PER GROUP OF LINES BELOW
+		'BUT USING 3 LINES IS CLEARER AND, APPARENTLY, GIVES THE CB290 EEPROM TIME TO CATCH UP
+		'
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STATE + ise_part_address), 2 )
+		schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug "B= ", Dec4 schedule(SCHEDULE_STATE, ise_line, SCHEDULE_GROUP_B)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_START + ise_part_address), 2 )
+		schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug " : ", Hex4 schedule(SCHEDULE_START, ise_line, SCHEDULE_GROUP_B)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_STOP + ise_part_address), 2 )
+		schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug " : ", Hex4 schedule(SCHEDULE_STOP, ise_line, SCHEDULE_GROUP_B)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_PRESET + ise_part_address), 2 )
+		schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_PRESET, ise_line, SCHEDULE_GROUP_B)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_DELIVERED + ise_part_address), 2 )
+		schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_DELIVERED, ise_line, SCHEDULE_GROUP_B)
+
+		ise_data = Eeread( EE_SCHEDULE_BLOCK_BEGIN + 2*(SCHEDULE_TOTAL + ise_part_address), 2 )
+		schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_B) = ise_data
+		Debug " : ", Dec4 schedule(SCHEDULE_TOTAL, ise_line, SCHEDULE_GROUP_B)
+
+		Debug Cr
+
+	Next
+
+	'----------------------------------------------------------------------------
+	'GRAND TOTALS
+
+Debug "WRITING GRAND TOTALS TO EEPROM",Cr
+
+	feed_volume_grand_total_A = 0x01234567					'4 BYTE EEWRITE TAKES 34.1 ms
+ 	Eewrite  EE_GRAND_TOTAL_A, feed_volume_grand_total_A, 4	'LONG = 4 BYTES
+
+	feed_volume_grand_total_B = 0x12345678					'4 BYTE EEWRITE TAKES 34.1 ms
+ 	Eewrite  EE_GRAND_TOTAL_B, feed_volume_grand_total_B, 4	'LONG = 4 BYTES
+
+	'----------------------------------------------------------------------------
+
+	feed_volume_grand_total_A = 0
+	feed_volume_grand_total_B = 0
+	'
+	feed_volume_grand_total_A = Eeread(EE_GRAND_TOTAL_A, 4)		'4 BYTE EEWRITE TAKES 34.1 ms
+	feed_volume_grand_total_B = Eeread(EE_GRAND_TOTAL_B, 4)		'4 BYTE EEWRITE TAKES 34.1 ms
+
+
+Debug "SHOWING GRAND TOTALS FROM EEPROM",Cr
+Debug "GRAND TOTAL A = ", Hex8 feed_volume_grand_total_A, Cr
+Debug "GRAND TOTAL B = ", Hex8 feed_volume_grand_total_B, Cr
+
+Debug "================================================",Cr
+
+End Sub
+'===============================================================================

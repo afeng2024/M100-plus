@@ -1,0 +1,1453 @@
+
+'===============================================================================
+' DECLARE CUBLOC DEVICE
+'===============================================================================
+Const Device = CB290
+
+
+'===============================================================================
+' INCLUDE FILES
+'===============================================================================
+#include "constants.inc"
+#include "dispenser.inc"
+#include "display.inc"
+#include "eeprom.inc"
+#include "all_variables.inc"
+
+
+'*******************************************************************************
+' BEGINNING OF MAIN PROGRAM
+'*******************************************************************************
+
+
+'===============================================================================
+' INITIALIZE INPUTS, OUTPUTS AND CUNET (I2C)
+'===============================================================================
+
+Initialize_Outputs			'initialize the output ports for LEDs and Testpoint
+Initialize_Inputs			'initialize the inputs for switches
+Initialize_CuNET			'initialize i2c CuNET for 7-segment LED displays
+Initialize_Displays			'initialize all displays to 8888 with decimal points
+Initialize_From_RTC			'initialize internal time from RTC IC
+
+
+#If INITIALIZATION_SOURCE = INIT_TEST_PATTERN_INTO_FRAM
+'===============================================================================
+' TEST_INIT_SCHEDULES_AND_GRAND_TOTALS IN RAM AND EEPROM
+'===============================================================================
+	Test_Init_Schedule_and_EEprom
+#Endif
+
+
+#If INITIALIZATION_SOURCE = INIT_ALL_NECESSARY
+'===============================================================================
+' INITIALIZER FOR INITIALIZING A BRAND NEW CB290
+'===============================================================================
+	Initialize_All_Necessary
+#Endif
+
+
+#If INITIALIZATION_SOURCE = INIT_SIMPLE_TEST_SCHEDULE
+'===============================================================================
+' INITIALIZER FOR A SIMPLE TEST-SCHEDULE
+'===============================================================================
+	Initialize_Simple_Test_Schedule
+#Endif
+
+
+
+'===============================================================================
+' INITIALIZE SCHEDULES AND OTHER RAM VARIABLES FROM EEPROM
+'===============================================================================
+Initialize_From_EEprom					'initialize schedules from EEprom to RAM
+
+
+'===============================================================================
+' SETUP THE HOPPER AND ASSOCIATED SCHEDULE-GROUP CHOICE
+'===============================================================================
+'DEFAULTS FOR HOPPER AND SCHEDULE GROUP
+	hopper_pointer = HOPPER_A						' HOPPER POINTER = HOPPER A
+	group_pointer  = SCHEDULE_GROUP_A				' SCHEDULE GROUP POINTER = GROUP A
+
+'-------------------------------------------------------------------------------
+
+	leds.LED_B_SELECTED_BIT = LED_OFF				' TURN OFF HOPPER B LED
+	leds.LED_GATE_B_BIT = GATE_CLOSED				' CLOSE GATE B
+
+	leds.LED_A_SELECTED_BIT = LED_ON				' TURN ON HOPPER A LED
+	leds.LED_GATE_A_BIT = GATE_CLOSED				' CLOSE GATE A
+
+
+'--- CHECK THE MANUAL CONTROLS AND PANEL PUSHBUTTON ---------------------------
+
+If aux_switches_asserted.BIT_HOPPER_MANUAL_SELECT_A Then
+	Hopper_Group_Handler HOPPER_GROUP_SELECT_A
+Elseif  aux_switches_asserted.BIT_HOPPER_MANUAL_SELECT_B Then
+	Hopper_Group_Handler HOPPER_GROUP_SELECT_B
+Elseif  switches_asserted.PB_SELECT_AB_BIT  Then
+	Hopper_Group_Handler HOPPER_GROUP_SELECT_AB
+Else
+	Hopper_Group_Handler HOPPER_GROUP_SELECT_X
+Endif
+
+'-------------------------------------------------------------------------------
+
+
+Show_Important_Coefficients				'USEFUL FOR TESTING PURPOSES, CAN BE REMOVED
+
+
+'===============================================================================
+' INITIALIZE TIMER INTERRUPT SERVICE ROUTINE (ISR)
+'===============================================================================
+On Timer(TIMER_ISR_INTERVAL) Gosub Timer_ISR		' initialize the Timer ISR
+
+
+'===============================================================================
+' INITIALIZE INTERRUPT-3 INTERRUPT SERVICE ROUTINE (ISR)
+'===============================================================================
+On Int3 Gosub Interrupt3_ISR						' initialize the Int3 ISR
+Set Int3 INDEXER_FALLING_EDGE						' interrupt on falling-edge input
+
+
+Feed_Dropped_Per_Chamber 1			'include Debug feedback re. calculation details
+
+Send_Initial_Data
+
+'===============================================================================
+' MAIN FOREGROUND LOOP (INTERRUPTS RUN IN THE "BACKGROUND"
+'===============================================================================
+Do
+	Feed_Dropped_Per_Chamber 0		'no Debug feedback re. calculation details
+
+	'---------------------------------------------------------
+	' IMPORTANT NOTE: TIME FUNCTIONS NOT NEEDED IN THIS MODEL
+	' (Time_Machine FUNCTION REMOVED)
+	'---------------------------------------------------------
+
+	Levels_Monitor
+
+	Pressure_Monitor
+
+	Dispenser_Indexer_Monitor
+
+	State_Machine							' THE SYSTEM'S LOGIC "WORK HORSE"
+
+	Update_LEDs
+
+	If setting_mode = 0 Then Display_Registers
+
+Loop
+
+
+'===============================================================================
+' INTERRUPT-3 (runs each pulse from the DISPENSER's Indexer
+'===============================================================================
+Interrupt3_ISR:
+
+#If TESTPOINT_1_INDICATOR = TESTPOINT_1_DISPENSER_PULSE
+Out TESTPOINT_1, 1									' SHOW INDEXER PULSES
+#Endif
+
+	dispenser_flag = 1								' 1 = DISPENSER INDEXER PULSE RECEIVED
+
+	dispenser_indexer_period_saved = dispenser_indexer_period
+
+	special_flags.FEEDING_TOO_SLOW_FLAG = 0					'clear the RPMs "too slow" flag
+
+	If ( (leds.LED_RUNNING_BIT = RUNNING)  And  _
+		 (leds.LED_PAUSED_BIT = NOT_PAUSED)  And  _
+		 (leds.LED_DISPENSER_POWER_BIT = DISPENSER_POWER_ON) )  Then
+
+		If feed_added_per_chamber_flag = 1 Then									'NEW VALUE IS READY
+			feed_chamber_amount_added_f = feed_added_per_chamber_L				'e.g. 43871 (FROM BACKGROUND ROUTINE)
+
+			feed_chamber_amount_added_f = feed_chamber_amount_added_f / 100000	'SCALE-DOWN FROM INTEGER MATH
+
+			feed_added_per_chamber_flag = 0									'ALLOW NEXT CALCULATION
+		Endif
+
+		feed_volume_added_f = feed_volume_added_f + feed_chamber_amount_added_f
+
+''Debug CR,"FVA=",Float feed_chamber_amount_added_f, Cr
+
+		'NOTE: THE FOLLOWING METHOD OF ADDING WHOLE INTEGER AMOUNTS AND KEEPING THE
+		'	   RESIDUE FOR NEXT INTERRUPT IS FASTER THAN FLOATING-POINT CONVERSIONS
+
+		If (feed_volume_added_f >= 3.0) Then
+			' ADD WHOLE KILOGRAM TO TOTALS (DISPLAY SHOWS ONLY WHOLE KILOGRAMS)
+
+			schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) + 3
+
+			schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) + 3
+
+			If group_pointer = SCHEDULE_GROUP_B Then
+				grand_total_array(GRAND_TOTAL_B) = grand_total_array(GRAND_TOTAL_B) + 3
+
+			Else
+				grand_total_array(GRAND_TOTAL_A) = grand_total_array(GRAND_TOTAL_A) + 3
+
+			Endif
+			
+			' BUT KEEP RESIDUE (REMAINDER) FOR NEXT "ADD-IN"
+			feed_volume_added_f = feed_volume_added_f - 3.0
+
+		Elseif (feed_volume_added_f >= 2.0) Then
+			' ADD WHOLE KILOGRAM TO TOTALS (DISPLAY SHOWS ONLY WHOLE KILOGRAMS)
+			
+			schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) + 2
+
+			schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) + 2
+
+			If group_pointer = SCHEDULE_GROUP_B Then
+				grand_total_array(GRAND_TOTAL_B) = grand_total_array(GRAND_TOTAL_B) + 2
+
+			Else
+				grand_total_array(GRAND_TOTAL_A) = grand_total_array(GRAND_TOTAL_A) + 2
+
+			Endif
+			
+			'BUT KEEP RESIDUE (REMAINDER) FOR NEXT "ADD-IN"
+			feed_volume_added_f = feed_volume_added_f - 2.0
+
+		Elseif (feed_volume_added_f >= 1.0) Then
+			' ADD WHOLE KILOGRAM TO TOTALS (DISPLAY SHOWS ONLY WHOLE KILOGRAMS)
+
+			schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) + 1
+
+			schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = _
+					schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) + 1
+
+			If group_pointer = SCHEDULE_GROUP_B Then
+				grand_total_array(GRAND_TOTAL_B) = grand_total_array(GRAND_TOTAL_B) + 1
+
+			Else
+				grand_total_array(GRAND_TOTAL_A) = grand_total_array(GRAND_TOTAL_A) + 1
+
+			Endif
+			
+			'BUT KEEP RESIDUE (REMAINDER) FOR NEXT "ADD-IN"
+			feed_volume_added_f = feed_volume_added_f - 1.0
+
+		Endif
+
+	Else
+		dispenser_indexer_period_saved = 0				' a special "flag" to show out-of-bounds
+
+	Endif
+
+	dispenser_indexer_period = 0
+
+#If TESTPOINT_1_INDICATOR = TESTPOINT_1_DISPENSER_PULSE
+Out TESTPOINT_1,0
+#Endif
+
+Return
+
+
+'===============================================================================
+' TIMER_TASK ISR (runs at multiples of 10ms)
+'===============================================================================
+Timer_ISR:
+
+#If TESTPOINT_1_INDICATOR = TESTPOINT_1_TIMER_TIC
+Out TESTPOINT_1, 1								' USED TO SHOW TIMER ISR "TIC" DUTY FACTOR
+#Endif
+
+	If time_changed_flag = 1 Then						'?: request to update the time IC
+'		time_of_day = schedule(SCHEDULE_START, 0, 0)
+
+		Timeset TIME_SECONDS_BCD,0										'y: clear the seconds register
+		Timeset TIME_MINUTES_BCD,Bin2bcd(time_of_day_minutes)	'   set the minutes register
+		Timeset TIME_HOURS_BCD,Bin2bcd(time_of_day_hours)		'   set the hours register
+		Timeset TIME_DATES_BCD,Bin2bcd(time_of_date)				'y: clear the seconds register
+		Timeset TIME_MONTHS_BCD,Bin2bcd(time_of_month)			'   set the minutes register
+		Timeset TIME_YEARS_BCD,Bin2bcd(time_of_year)		'   set the hours register
+
+		time_changed_flag = 0							'	clear flag (allows new updates)
+		If time_of_year >24 Then time_error = 0
+' 		If time_error = 1 Then
+'			leds.LED_TIME_BIT = TIME_MODE_ON
+'			setting_mode = 1
+'		Endif
+	Endif
+
+	Incr heartbeat_timer
+
+	If (heartbeat_timer <= HEARTBEAT_TIME_1) Then
+ 		Out HEARTBEAT_LED,1
+
+
+'		=--=--= Test Time Light begin
+' 		If time_error = 1 Then leds.LED_TIME_BIT = TIME_MODE_ON
+
+' 		=--=--= Test End
+
+
+		time_of_day_seconds = Time(Bin2bcd(TIME_SECONDS_BCD))
+		time_of_day_minutes = Time(Bin2bcd(TIME_MINUTES_BCD))			' GET THE TIME TWICE EVERY SECOND
+		time_of_day_hours = Time(Bin2bcd(TIME_HOURS_BCD))
+		
+		If (time_state = 0) And (setting_mode = 0) Then
+			schedule(SCHEDULE_START, 0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes									' UPDATED TWICE PER SECOND
+			schedule(SCHEDULE_STOP, 0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes									' UPDATED TWICE PER SECOND
+		Endif
+
+	Elseif (heartbeat_timer <= HEARTBEAT_TIME_2) Then
+		Out HEARTBEAT_LED,0
+
+'		=--=--= Test Time Light begin
+' 		If time_error = 1 Then leds.LED_TIME_BIT = TIME_MODE_OFF
+
+' 		=--=--= Test End
+ 		
+
+	Elseif (heartbeat_timer <= HEARTBEAT_TIME_3) Then
+		Out HEARTBEAT_LED,1
+
+
+'		=--=--= Test Time Light begin
+' 		If time_error = 1 Then leds.LED_TIME_BIT = TIME_MODE_ON
+
+' 		=--=--= Test End
+
+
+		time_of_day_seconds = Time(TIME_SECONDS_BCD)
+		time_of_day_minutes = Time(TIME_MINUTES_BCD)				' GET THE TIME TWICE EVERY SECOND
+		time_of_day_hours = Time(TIME_HOURS_BCD)
+
+		If (time_state = 0) And (setting_mode = 0) Then
+			schedule(SCHEDULE_START, 0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes										' UPDATED TWICE PER SECOND
+			schedule(SCHEDULE_STOP, 0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes										' UNLESS OPERATOR IS ADJUSTING TIME
+		Endif
+
+	Else
+		Out HEARTBEAT_LED,0
+		If (heartbeat_timer >= HEARTBEAT_PERIOD) Then
+			heartbeat_timer = 0
+			
+'			=--=--= Test Time Light begin
+'	 		If time_error = 1 Then leds.LED_TIME_BIT = TIME_MODE_OFF
+
+' 			=--=--= Test End
+
+			
+		Endif
+
+	Endif
+
+	'----------------------------------------------------------------------------
+	Incr dispenser_indexer_period		' CAUTION: NO LIMITS IMPOSED; CAN WRAP-AROUND
+
+	'----------------------------------------------------------------------------
+	Get_Switches						' GET CURRENT VALUES OF SWITCHES (INCLUDING PUSHBUTTONS)
+
+	'---------------------------------------------------------
+	' IMPORTANT NOTE: TIME FUNCTIONS NOT NEEDED IN THIS MODEL
+	' (Time_Machine FUNCTION REMOVED)
+	'---------------------------------------------------------
+	' Time_Handler						' REMOVED: RUNS THE TIME PUSHBUTTON STATE MACHINE ==--==--== test run
+	
+
+	If (switches_asserted.PB_BEGIN_BIT) And (time_error = 0)	Then Begin_Program_Handler
+		
+	If (switches_asserted.PB_END_BIT)		Then  End_Program_Handler
+		
+	If (switches_asserted.PB_PAUSE_BIT)		Then  Pause_Handler
+
+	'------------------------------------------------------------------
+	' THIS SECTION ADDED TO HANDLE MASTER MANUAL A-NEITHER-B SELECTOR
+	' WITH SUBORDINATE PANEL A/B PUSHBUTTON SELECTOR
+	'------------------------------------------------------------------
+	If aux_switches.BIT_HOPPER_MANUAL_SELECT_A = SELECTED Then
+		Hopper_Group_Handler HOPPER_GROUP_SELECT_A 
+
+	Elseif aux_switches.BIT_HOPPER_MANUAL_SELECT_B = SELECTED Then
+		Hopper_Group_Handler HOPPER_GROUP_SELECT_B
+
+	Else
+		If switches_asserted.PB_SELECT_AB_BIT  Then
+			Hopper_Group_Handler HOPPER_GROUP_SELECT_AB
+
+		Else
+			Hopper_Group_Handler HOPPER_GROUP_SELECT_X
+
+		Endif
+	Endif
+	'------------------------------------------------------------------
+
+	Schedule_Index_Plus_Handler
+	Schedule_Index_Minus_Handler
+	If (switches_asserted.PB_CLEAR_TOTAL_BIT)		Then  Clear_Total_Handler
+
+	If (switches_asserted.PB_CLEAR_DELIVERED_BIT)	Then  Clear_Delivered_Handler
+
+	'----------------------------------------------------------------------------
+
+'	More_Less_With_Acceleration
+
+	'=--=--= RTC setting test begin
+
+	Multi_Parameter_Setting
+
+	'=--=--= RTC setting test end
+	
+
+
+	'----------------------------------------------------------------------------
+
+	If (debounce_timer > 0) Then
+   		Decr debounce_timer
+	Endif
+
+	'----------------------------------------------------------------------------
+	If (accel_delay > 0) Then
+  		Decr accel_delay
+	Endif
+
+	'----------------------------------------------------------------------------
+	If hopper_empty_flag = HOPPER_NOT_EMPTY Then	' ?: hoppers are not empty [from Levels_Monitor()]
+		hopper_empty_counter = 0					' Y: feedback to Levels_Monitor()
+	Else											' N: one or more hoppers are empty
+		If	hopper_empty_counter < HOPPER_EMPTY_COUNTER_MAX  Then	'?: counter >= maximum limit
+			hopper_empty_counter = hopper_empty_counter + 1			'N: counter++ [for Levels_Monitor()]
+		Endif
+		If  hopper_empty_counter = HOPPER_EMPTY_COUNTER_MAX - 1 Then
+			special_flags.EMPTY_HOPPER_PAUSE = 1
+			special_flags.END_REQ_BIT = 1
+		Endif
+	Endif
+
+	'----------------------------------------------------------------------------
+	If (blinking_timer > 0) Then
+		Decr blinking_timer
+	Endif
+
+	'----------------------------------------------------------------------------
+
+#If TESTPOINT_1_INDICATOR = TESTPOINT_1_TIMER_TIC
+Out TESTPOINT_1, 0								' USED TO SHOW TIMER ISR "TIC" DUTY FACTOR
+#Endif
+
+Return
+'-------------------------------------------------------------------------------
+
+End
+
+
+'*******************************************************************************
+' END OF MAIN PROGRAM
+'*******************************************************************************
+
+
+'===============================================================================
+' INCLUDE EXTERNAL SUPPORT FILES
+'===============================================================================
+#include "displays.bas"
+#include "eeprom.bas"
+#include "state_machine.bas"
+#include "m100newsub.bas"
+
+
+'===============================================================================
+' SHOW IMPORTANT COEFFICIENTS
+'===============================================================================
+Sub  Show_Important_Coefficients()
+
+	local_single	Var Single
+
+	Debug "System Tics Per Second      = ", Dec CLOCK_TICS_PER_SECOND,Cr
+
+	local_single = feed_specific_gravity_i
+	local_single = local_single / 1000.0
+	
+'	Debug "Feed Specific Gravity (I)   = ", Dec feed_specific_gravity_i,Cr
+	Debug "Feed Specific Gravity (F)   = ", Fp(local_single,1,3),Cr
+
+	local_single = feed_delivery_factor_i
+	local_single = local_single / 1000.0
+
+'	Debug "Feed Delivery Factor (I)    = ", Dec feed_delivery_factor_i,Cr
+	Debug "Feed Delivery Factor (F)    = ", Fp(local_single,1,3),Cr
+
+
+	If rotary_type = 1 Then
+		Debug "Cubic Feet Per Rotary Valve = ", Fp(ROTARY_VALVE_CU_FT_6,1,4),Cr
+		Debug "Cubic Feet Per Chamber      = ", Fp(CHAMBER_CU_FT_6,1,5),Cr
+'		Debug "Kg of Feed Per Chamber      = ", Fp(ROTARY_CHAMBER_KG_FEED_6,1,4),Cr
+	Else
+		Debug "Cubic Feet Per Rotary Valve = ", Fp(ROTARY_VALVE_CU_FT_8,1,4),Cr
+		Debug "Cubic Feet Per Chamber      = ", Fp(CHAMBER_CU_FT_8,1,5),Cr
+'		Debug "Kg of Feed Per Chamber      = ", Fp(ROTARY_CHAMBER_KG_FEED_8,1,4),Cr
+	Endif
+	
+'	Debug "Maximum Feed Rate ( /Min)   = ", Fp(FEED_RATE_MAX,3,1),Cr
+'	Debug "Maximum Rotary Valve RPM    = ", Fp(MAXIMUM_RPM,2,1),Cr
+
+'	Debug "Min Secs Per Indexer_Pulse  = ", Fp(INDEXER_SPP_MIN,3,3),Cr
+'	Debug "Min Tics Per Indexer Pulse  = ", Fp(INDEXER_TPP_MIN,3,1),Cr
+
+'	Debug "Max Secs Per Indexer_Pulse  = ", Fp(INDEXER_SPP_MAX,3,3),Cr
+'	Debug "Max Tics Per Indexer Pulse  = ", Fp(INDEXER_TPP_MAX,3,1),Cr
+
+End Sub
+
+
+'===============================================================================
+' INITIALIZE FROM REAL TIME CLOCK
+'===============================================================================
+Sub  Initialize_From_RTC()
+
+'=--=--=  M100+ add begin
+'	Initialize numbers from EEPROM
+
+	Initialize_variables
+	time_of_day_seconds = Time(TIME_SECONDS_BCD)
+	time_of_day_minutes = Time(TIME_MINUTES_BCD)
+	time_of_day_hours = Time(TIME_HOURS_BCD)
+
+Debug "TIME = ", Dec Bcd2bin(time_of_day_hours), ":", Dec Bcd2bin(time_of_day_minutes), ":", Dec Bcd2bin(time_of_day_seconds), Cr
+
+'=--=--=  M100+ add end
+
+	time_changed_flag = 0							'	clear flag (allows new updates)
+
+	schedule(SCHEDULE_START, 0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes							'UPDATED TWICE A SECOND
+	schedule(SCHEDULE_STOP,  0, 0) = time_of_day_hours * 0x100 + _
+				time_of_day_minutes							'(DITTO)
+
+End Sub
+
+
+'===============================================================================
+' INITIALIZE THE SWITCHES INPUTS
+'===============================================================================
+Sub  Initialize_Inputs()				'initialize inputs for switches
+
+	'input the whole integer block of switches
+	
+	switches = Bytein(SW_PORTBLOCK_L) Or (Bytein(SW_PORTBLOCK_H) << 8)
+
+	aux_switches = Bytein(AUX_SW_PORTBLOCK_L) Or (Bytein(AUX_SW_PORTBLOCK_H) << 8)
+
+End Sub
+
+
+'===============================================================================
+' INITIALIZE THE LED AND TESTPOINT OUTPUTS
+'===============================================================================
+Sub  Initialize_Outputs()
+
+	Out IR_TRANSMITTER_PORT, 0				'HOPPER_EMPTY_TX_PORT (INFRARED PULSES)
+	Out TESTPOINT_0, 0
+	Out TESTPOINT_1, 0
+	
+	Byteout LED_PORTBLOCK_L, LED_OFF		'byte is cleared to 0
+	Byteout LED_PORTBLOCK_H, LED_OFF		'byte is cleared to 0
+	Set Outonly On							'enable CB290's dedicated outputs
+
+End Sub
+
+
+'===============================================================================
+' INITIALIZE THE COMLINK'S CuNET I2C PORTS (SDA AND SCL)
+'===============================================================================
+Sub  Initialize_CuNET()
+
+	Set I2c CUNET_SDA,CUNET_SCL	'initialize CuNet port for 7-Seg LED Displays
+
+End Sub
+
+
+'===============================================================================
+' ACQUIRE LOGIC VALUES OF SWITCHES (INCLUDING PUSHBUTTONS)
+'===============================================================================
+Sub Get_Switches()			'CALLED EVERY SYSTEM TIMER IRQ "TIC"
+
+	If (debounce_timer = 0) Then
+
+		switches_previous = switches
+		switches = Bytein(SW_PORTBLOCK_H) << 8 Or Bytein(SW_PORTBLOCK_L)
+		switches = switches And SW_MASK									'CHOOSE WHAT YOU WANT TO IGNORE
+
+		switches_asserted = Not switches_previous						'Asserted = changed from 0 to 1
+		switches_asserted = switches_asserted And switches				'Asserted = Now & ~Previous
+		
+		switches_released = Not switches								'Released = changed from 1 to 0
+		switches_released = switches_released And switches_previous		'Released = ~Now & Previous
+
+		aux_switches_previous = aux_switches
+		aux_switches = Bytein(AUX_SW_PORTBLOCK_H) << 8 Or Bytein(AUX_SW_PORTBLOCK_L)
+		aux_switches = aux_switches And AUX_SW_MASK								'CHOOSE WHAT YOU WANT TO IGNORE
+
+		aux_switches_asserted = Not aux_switches_previous						'Asserted = changed from 0 to 1
+		aux_switches_asserted = aux_switches_asserted And aux_switches			'Asserted = Now & ~Previous
+		
+		aux_switches_released = Not aux_switches								'Released = changed from 1 to 0
+		aux_switches_released = aux_switches_released And aux_switches_previous	'Released = ~Now & Previous
+
+
+		If (aux_switches_asserted > 0) Or (aux_switches_released > 0) Or _
+		   (switches_asserted > 0) Or (switches_released > 0) Then
+		   	debounce_timer = DEBOUNCE_DELAY
+		Endif
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' MORE or LESS WITH ACCELERATION
+' CAUTION: The following is not "polished" and uses empirically determined values
+'===============================================================================
+Sub  More_Less_With_Acceleration()
+
+	mlwa_int	Var	Integer
+
+	If (leds.LED_TIME_BIT = TIME_MODE_OFF) Or (time_state = 0) Then		'?: ADJUSTING FEEDING PARAMETERS
+
+		'---- ADJUSTING FEEDING PARAMETERS -------------------------------------
+		If (line_pointer > 0) Then										'Y: ADJUST PARAMETERS (NOT TIME)
+
+			If ( (switches.PB_MORE_BIT = PB_PRESSED)  And  _			'	?: WANTING TO INCREASE THE VALUE
+			     ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+				    (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																		'	Y: INCREASE THE VALUE
+				mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_PRESET, line_pointer, group_pointer) )
+				schedule(SCHEDULE_PRESET, line_pointer, group_pointer) = mlwa_int
+
+			Elseif ( (switches.PB_LESS_BIT = PB_PRESSED)  And  _		'	N: '?: WANTING TO DECREASE THE VALUE
+			         ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+				        (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																		'	Y: DECREASE THE VALUE
+				mlwa_int = IncDec_With_Accel( INCDEC_LESS, schedule(SCHEDULE_PRESET, line_pointer, group_pointer) )
+				schedule(SCHEDULE_PRESET, line_pointer, group_pointer) = mlwa_int
+		
+			Else														'	N: NEITHER, SET accel_amount = 0
+				accel_amount = 0										'	   NOTE: accel_amount IS VALUE AND FLAG
+	
+			Endif
+
+		'---- ADJUST SPECIAL PARAMETERS ----------------------------------------
+		Elseif (setting_mode = 1) Then										'N:
+			If ( (switches.PB_MORE_BIT = PB_PRESSED)  And _				'	?: INCREASE SPECIFIC GRAVITY VALUE
+			   ( (leds.LED_RUNNING_BIT = NOT_RUNNING)  Or  _
+				 (leds.LED_PAUSED_BIT = PAUSED) ) )   Then
+																		'	Y: INCREASE THE VALUE
+				mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_PRESET, line_pointer, group_pointer) )
+
+				schedule(SCHEDULE_PRESET, line_pointer, group_pointer) = mlwa_int
+
+				kg_per_rot_changed = 1									'	   SET THE KG/ROT-CHANGED FLAG
+
+			Elseif ( (switches.PB_LESS_BIT = PB_PRESSED)  And _			'	N: ?: DECREASE SPECIFIC GRAVITY VALUE
+			       ( (leds.LED_RUNNING_BIT = NOT_RUNNING)  Or _
+				     (leds.LED_PAUSED_BIT = PAUSED) ) )   Then
+																		'	   Y: DECREASE THE VALUE
+				mlwa_int = IncDec_With_Accel( INCDEC_LESS, schedule(SCHEDULE_PRESET, line_pointer, group_pointer) )
+				schedule(SCHEDULE_PRESET, line_pointer, group_pointer) = mlwa_int
+
+				kg_per_rot_changed = 1									'	   SET THE KG/ROT-CHANGED FLAG
+
+			Elseif ( (switches.PB_CLEAR_TOTAL_BIT = PB_PRESSED) And _	'	N: ?:INCREASE FEED DELIVERY FACTOR
+			       ( (leds.LED_RUNNING_BIT = NOT_RUNNING)  Or _
+				     (leds.LED_PAUSED_BIT = PAUSED) ) )   Then
+																		'	   Y: INCREASE THE VALUE
+				mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) )
+				schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = mlwa_int
+
+				kg_per_rot_changed = 1									'	   SET THE KG/ROT-CHANGED FLAG
+			
+			Elseif ( (switches.PB_GRAND_TOTAL_BIT = PB_PRESSED) And _	'	N: ?: DECREASE FEED DELIVERY FACTOR
+			       ( (leds.LED_RUNNING_BIT = NOT_RUNNING)  Or _
+				     (leds.LED_PAUSED_BIT = PAUSED) ) )   Then
+
+				mlwa_int = IncDec_With_Accel( INCDEC_LESS, schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) )
+				schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = mlwa_int
+
+				kg_per_rot_changed = 1									'	   SET THE KG/ROT-CHANGED FLAG
+			
+			Else														'	N: NEITHER, SET accel_amount = 0
+				accel_amount = 0										'	   NOTE: accel_amount IS A VALUE AND FLAG
+	
+			Endif
+		Else
+			'Other setting modes
+			accel_amount = 0
+		Endif
+
+	'------------------------------------------------------------------
+	'WE ARE ADJUSTING TIME OR SCHEDULE
+	Else
+		' ADJUSTING TIME OR SCHEDULE
+		If ( (switches.PB_MORE_BIT = PB_PRESSED)  And  _						'?: WANTING TO INCREASE THE VALUE
+		     ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+			    (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																				'Y:	INCREASE THE VALUE
+			mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_START, line_pointer, group_pointer) )
+			schedule(SCHEDULE_START, line_pointer, group_pointer) = mlwa_int
+
+			If (line_pointer = 0) Then											'	?: ADJUSTING TIME
+				schedule(SCHEDULE_STOP, line_pointer, group_pointer) = mlwa_int	'	Y: "STOP" = "START" FOR TIME
+				time_changed_flag = 1											'      SET FLAG TO UPDATE CLOCK IC
+			Endif
+
+		Elseif ( (switches.PB_LESS_BIT = PB_PRESSED)  And  _					'N: ?: WANTING TO DECREASE THE VALUE
+		         ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+			        (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																				'	Y: DECREASE THE VALUE
+			mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_START, line_pointer, group_pointer) )
+			schedule(SCHEDULE_START, line_pointer, group_pointer) = mlwa_int
+
+			If (line_pointer = 0) Then											'	?: ADJUSTING TIME
+				schedule(SCHEDULE_STOP, line_pointer, group_pointer) = mlwa_int	'	Y: STOP = START FOR TIME
+				time_changed_flag = 1											'	   SET FLAG TO UPDATE CLOCK IC
+			Endif
+
+		Elseif ( (switches.PB_CLEAR_TOTAL_BIT = PB_PRESSED)  And  _				'N: ?: WANTING TO CLEAR TOTAL
+		         ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+			        (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																				'   Y:
+			mlwa_int = IncDec_With_Accel( INCDEC_MORE, schedule(SCHEDULE_STOP, line_pointer, group_pointer) )
+			schedule(SCHEDULE_STOP, line_pointer, group_pointer) = mlwa_int
+
+			If (line_pointer = 0) Then										   	   '?: ADJUSTING TIME
+				schedule(SCHEDULE_START, line_pointer, group_pointer) = mlwa_int   'Y: START = STOP FOR TIME
+				time_changed_flag = 1											   '   SET FLAG TO UPDATE CLOCK IC
+			Endif
+
+		Elseif ( (switches.PB_GRAND_TOTAL_BIT = PB_PRESSED)  And  _				'N: ?: WANTING CLEAR GRAND TOTAL
+		         ( (leds.LED_RUNNING_BIT <> RUNNING)  Or  _
+			        (leds.LED_PAUSED_BIT = PAUSED) ) )  Then
+																				'   Y: HANDLE TOTAL
+			mlwa_int = IncDec_With_Accel( INCDEC_LESS, schedule(SCHEDULE_STOP, line_pointer, group_pointer) )
+			schedule(SCHEDULE_STOP, line_pointer, group_pointer) = mlwa_int
+
+			If (line_pointer = 0) Then												'?: ADJUSTING TIME
+				schedule(SCHEDULE_STOP, line_pointer, group_pointer) = mlwa_int		'Y: START = STOP FOR TIME
+				time_changed_flag = 1												'   SET FLAG TO UPDATE CLOCK IC
+			Endif
+
+		Else
+            accel_amount = 0        											'	N: NEITHER, SET accel_amount = 0         
+                                                   					            '	   NOTE: accel_amount IS A VALUE AND FLAG
+      Endif
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' INCDEC WITH ACCELERATION
+' Caution:
+'   The following code Is Not "polished" And uses empirically determined numbers
+'===============================================================================
+Function  IncDec_With_Accel (incdec_x As Byte, parameter As Integer) As Integer
+
+	param_temp Var Integer
+
+	param_temp = parameter
+
+	If (accel_amount = 0) Then
+		accel_amount = 1							' amount of acceleration (until it is increased)
+		accel_delay  = 0							' delay before next increase of parameter_x
+		accel_repeat = ACCELERATION_REPEATS			' number of repeats of same acceleration before changing
+	Endif
+
+	If (accel_delay > 0) Then
+		Decr accel_delay
+		IncDec_With_Accel = parameter							' NO CHANGE
+
+	Else
+		If (accel_amount > ACCELERATION_MAX) Then				' ?: above maximum acceleration limit
+			accel_amount = ACCELERATION_MAX						' ?: set acceleration to maximum
+		Endif
+
+		If setting_mode = 1  Then								' Seting Gravity and FAF
+
+			If (incdec_x = 1) Then									'y: ?: first increment/decrment
+
+				param_temp = parameter + accel_amount				'	y: temporarily accelerate the increase
+				
+				If (param_temp > FEED_VOLUME_A_MAX) Then			'	   ?: above the max. limit
+					param_temp = FEED_VOLUME_A_MAX					'      y: set parameter to max. limit
+				Endif
+
+			Else
+				param_temp = parameter - accel_amount				' temporarily accelerate the decrease
+				If (param_temp > MAX_POSITIVE_INTEGER) Then			' ?: number became negative
+					param_temp = 0									' y: set parameter to 0 (min. limit)
+				Endif
+			Endif
+
+		Elseif setting_mode = 2  Then									' ?: adjust time/date
+
+           If (incdec_x = 1) Then
+
+                param_temp = parameter + accel_amount       ' accelerate the increase
+
+                If param_temp.Nib0 >= 0x0A Then             'test BCD boundary
+                    param_temp.Nib0 = 0                     'if true, set digit = 0 and
+                    param_temp = param_temp + 0x0010        'add a "carry" to next digit
+                Endif
+
+                If param_temp.Byte0 >= 0x60 Then            'test 59-minute boundary
+                    param_temp.Byte0 = 0                    'if true, set minute = 0
+                    param_temp = param_temp + 0x0100        'and carry forward to hou
+                Endif
+
+                If param_temp.Nib2 >= 0x0A Then             'test BCD bounday
+                    param_temp.Nib2 = 0                     'if true, set hour = 0
+                    param_temp = param_temp + 0x1000        'and carry to next digit
+                Endif
+
+                If param_temp.Byte1 >= 0x24 Then            'test 24-hour boundary
+                    param_temp = 0                          'set to 00:00
+                Endif
+
+            Else
+                param_temp = parameter - accel_amount       ' accelerate the decrease
+
+                If (param_temp And 0x3FFF) >= 0x2400 Then   'test limit (remember, decrement already done)
+                    param_temp = 0x2359                     'go to 23:59 (cycle and boundary)
+                Endif
+				
+                If param_temp.nib0 >= 0x0A Then             'test boundary
+                    param_temp.nib0 = 0                     'set minute = 0 (maintain boundary)
+                    param_temp = param_temp + 0x0009        'set to boundary - 1
+                Endif
+				
+                If param_temp.Byte0 >= 0x60 Then            'test boundary
+                    param_temp.Byte0 = 0                    'set minutes = 00 (maintain boundary)
+                    param_temp = param_temp + 0x59          'set to boundary - 1
+                Endif
+				
+                If param_temp.nib2 >= 0x0A Then             'test bounday
+                    param_temp = param_temp And 0x3000      'set hour & minutes = x0:00 (boundary)
+                    param_temp = param_temp + 0x0959
+                Endif
+				Endif
+		Elseif setting_mode = 3  Then
+					' Setting Max of Location
+		Endif
+		
+		IncDec_With_Accel = param_temp
+
+		accel_delay = ACCELERATION_DELAY						' set the delay before next (possible) change
+		'accel_delay = ACCEL_DELAY_MAX - accel_amount			' same as above but for larger parameter ranges
+
+		If (accel_repeat > 0) Then
+			Decr accel_repeat
+		Else
+			accel_repeat = ACCELERATION_REPEATS					' number of time to repeat the same acceleration
+			'accel_amount = 2*accel_amount + 1					' acceleration formula
+
+			If     (accel_amount = 1) Then
+				accel_amount = 10
+			Elseif (accel_amount = 10) Then
+				accel_amount = 20
+			Elseif (accel_amount = 20) Then
+				accel_amount = 50
+			Else
+				accel_amount = 100
+			Endif
+		Endif
+	Endif
+
+End Function
+
+
+'===============================================================================
+' UPDATE LEDS
+'===============================================================================
+Sub Update_LEDs()
+
+	Byteout LED_PORTBLOCK_L, leds.Byte0
+	Byteout LED_PORTBLOCK_H, leds.Byte1
+
+End Sub
+
+
+
+'===============================================================================
+' LEVEL IN HOPPER A & B (NOT USED IN M100) MONITOR
+'===============================================================================
+Sub	Levels_Monitor()
+
+	If (switches.SW_FEED_LEVEL_A_BIT = FEED_LEVEL_NOT_OK) Or _
+	   (switches.SW_FEED_LEVEL_B_BIT = FEED_LEVEL_NOT_OK) Then
+		hopper_empty_flag = HOPPER_EMPTY	' used by monostable timer in TIMER_IST()
+	Else
+		hopper_empty_flag = HOPPER_NOT_EMPTY
+	Endif
+
+'Debug "s=",Hex switches,Cr
+
+	If hopper_empty_counter >= HOPPER_EMPTY_COUNTER_MAX Then	'?: hold-off delay reached
+		leds.LED_EMPTY_ALARM_BIT = EMPTY_ALARM_ON				'Y: indicate hopper empty
+	Else
+		leds.LED_EMPTY_ALARM_BIT = EMPTY_ALARM_OFF				'N: indicate hoppers not empty
+
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' PRESSURE HANDLER
+'===============================================================================
+Sub	Pressure_Monitor()
+
+	If (switches.SW_PRESSURE_BIT = SW_PRESSURE_NOT_OK) Then
+		leds.LED_PRESSURE_ALARM_BIT = PRESSURE_ALARM_ON
+
+	Else
+		leds.LED_PRESSURE_ALARM_BIT = PRESSURE_ALARM_OFF
+
+	Endif
+
+End Sub
+
+
+
+'===============================================================================
+' CALCULATES THE COEFFICIENTS FOR AMOUNT OF FEED ADDED EACH PULSE
+'===============================================================================
+Sub  Feed_Dropped_Per_Chamber(debugs_onoff As Byte)
+
+	' NOTE: ALL MATH BELOW IS INTEGER MATH WITH VALUES SCALED-UP TO MAXIMIZE
+	'       ACCURACY AND IS SCALED-DOWN TO PREVENT LONG-INTEGER OVERFLOW.
+	
+	If feed_added_per_chamber_flag = 0 Then		'IF SAFE TO DO SO, CALCULATE NEW VALUE (USED IN IRQ3 ISR)
+
+		feed_specific_gravity_i = schedule(SCHEDULE_PRESET, 0, group_pointer)	'USER-SETTABLE SPECIFIC GRAVITY
+
+		feed_delivery_factor_i = schedule(SCHEDULE_TOTAL, 0, group_pointer)		'USER-SETTABLE FDF
+
+'Debug "Gravity = ", Dec4 feed_specific_gravity_i, "    Feed Factor = ", dec4 feed_delivery_factor_i
+'Debug "   SCHEDULE_PRESET", dec4 SCHEDULE_PRESET, "   SCHEDULE_TOTAL = ", dec4 SCHEDULE_TOTAL, "   Group=", Dec group_pointer, Cr, Cr
+
+
+		If debugs_onoff > 0 Then
+		
+Debug "CALCULATE FEED DROPPED PER CHAMBER"
+
+			If rotary_type = 1 Then
+				If weight_unit = 1 Then
+					feed_added_per_chamber_L = ROTARY_CHAMBER_KG_H2O_6 * 1000							'Rotary 6X6, Weight KG
+				Else
+					feed_added_per_chamber_L = ROTARY_CHAMBER_LBS_H2O_6 * 1000							'Rotary 6X6, Weight Lbs
+				Endif
+			Else
+				If weight_unit = 1 Then
+					feed_added_per_chamber_L = ROTARY_CHAMBER_KG_H2O_8 * 1000							'Rotary 8X8, Weight KG
+				Else
+					feed_added_per_chamber_L = ROTARY_CHAMBER_LBS_H2O_8 * 1000							'Rotary 8X8, Weight Lbs
+				Endif
+			Endif
+Debug Cr, "CHAMBER_KG_H20 * 1000 = ", Dec feed_added_per_chamber_L
+
+			feed_added_per_chamber_L = feed_added_per_chamber_L * feed_specific_gravity_i	'ADJUST FOR FEED'S SPECIFIC GRAVITY
+Debug Cr, "* SPECIFIC GRAVITY = ", Dec feed_added_per_chamber_L
+
+			feed_added_per_chamber_L = feed_added_per_chamber_L / 100						'KEEP INTEGER VALUE FROM OVERFLOWING
+Debug "/ 100 = ", Dec feed_added_per_chamber_L
+
+			feed_added_per_chamber_L = feed_added_per_chamber_L * feed_delivery_factor_i	'ADJUST FOR FEED DELIVERY FACTOR
+Debug Cr, "* DELIVERY FACTOR = ", Dec feed_added_per_chamber_L
+
+			feed_added_per_chamber_L = feed_added_per_chamber_L / 100						'KEEP INTEGER VALUE FROM OVERFLOWING
+Debug "/ 100 = ", Dec feed_added_per_chamber_L, Cr										'CONFIRMED CORRECT AT 2020.03.11.1300
+
+		Else
+			If rotary_type = 1 Then
+				If weight_unit = 1 Then
+					feed_added_per_chamber_L = ROTARY_CHAMBER_KG_H2O_6 * 1000							'Rotary 6X6, Weight KG
+				Else
+					feed_added_per_chamber_L = ROTARY_CHAMBER_LBS_H2O_6 * 1000							'Rotary 6X6, Weight Lbs
+				Endif
+			Else
+				If weight_unit = 1 Then
+					feed_added_per_chamber_L = ROTARY_CHAMBER_KG_H2O_8 * 1000							'Rotary 8X8, Weight KG
+				Else
+					feed_added_per_chamber_L = ROTARY_CHAMBER_LBS_H2O_8 * 1000							'Rotary 8X8, Weight Lbs
+				Endif
+			Endif
+
+			feed_added_per_chamber_L = feed_added_per_chamber_L * feed_specific_gravity_i	'ADJUST FOR FEED'S SPECIFIC GRAVITY
+			feed_added_per_chamber_L = feed_added_per_chamber_L / 100						'KEEP INTEGER VALUE FROM OVERFLOWING
+			feed_added_per_chamber_L = feed_added_per_chamber_L * feed_delivery_factor_i	'ADJUST FOR FEED DELIVERY FACTOR
+			feed_added_per_chamber_L = feed_added_per_chamber_L / 100						'KEEP INTEGER VALUE FROM OVERFLOWING
+
+		Endif
+		
+		feed_added_per_chamber_flag = 1													'SIGNAL = NEW VALUE IS READY
+
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' CALCULATE FEED RATE
+'===============================================================================
+Sub Calc_Feed_Rate()
+
+Debug"Calc_Feed_Rate",Cr
+	'Dispenser_Indexer_Monitor
+
+End Sub
+
+
+'===============================================================================
+' DISPENSER (ROTARY VALVE OR AUGER) INDEXER HANDLER
+'===============================================================================
+Sub	Dispenser_Indexer_Monitor()
+
+	If (dispenser_flag > 0) Then
+
+		If (dispenser_indexer_period_saved = 0)  Then
+			feed_rate_f = 0.0
+			feed_rate = 0
+		Else
+			feed_rate_f = feed_chamber_amount_added_f * 60.0 * CLOCK_TICS_PER_SECOND
+			feed_rate_f = feed_rate_f / dispenser_indexer_period_saved
+			feed_rate = feed_rate_f + 0.499
+
+''Debug CR,"TfrFR=",Dec dispenser_indexer_period_saved,":",Float feed_rate_f,":",Dec feed_rate,Cr
+''DEBUG CR,"FR=",Fp(feed_rate_f,3,1)
+''DEBUG CR,"FR=",Dec feed_rate
+
+#If  FEED_RATE_DISPLAY_SMOOTHING = 1			' USED FOR LESS "JUMPINESS" IN DISPLAYED RATE
+			'feed_rate_avg1 = 0.499 + feed_rate
+			feed_rate_avg1 = (feed_rate_avg1 + feed_rate) / 2
+			feed_rate_avg2 = (feed_rate_avg2 + feed_rate_avg1) / 2
+			feed_rate_avg3 = (feed_rate_avg3 + feed_rate_avg2) / 2
+			feed_rate_avg4 = (feed_rate_avg4 + feed_rate_avg3) / 2
+#Endif
+		Endif
+
+		dispenser_flag = 0
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' BEGIN PROGRAM HANDLER
+'===============================================================================
+Sub Begin_Program_Handler()
+
+	If (leds.LED_PRESSURE_ALARM_BIT = PRESSURE_ALARM_OFF) Then	' BEGIN ONLY IF PRESSURE = OK
+		If (leds.LED_RUNNING_BIT = NOT_RUNNING) Then					'	AND MACHINE IS NOT ALREADY RUNNING
+			If (leds.LED_PAUSED_BIT = NOT_PAUSED) Then				'	AND MACHINE IS NOT PAUSED
+				If (time_state = 0) And (setting_mode = 0) Then		'	AND TIME IS NOT BEING ADJUSTED
+					If line_pointer = 0 Or line_pointer > max_location Then
+						line_pointer = 1
+					Endif
+
+					special_flags.END_REQ_BIT = 0						'	CLEAR ANY PREVIOUS "HANGING" END-PROGRAM REQUEST
+
+					Save_Schedule_Line_To_EEprom  line_pointer, group_pointer	'	UPDATE THE EEPROM VALUES
+
+'Debug Cr,"*****BEGIN*****",Cr
+
+					If machine_state = 0 And _						'		?: PROGRAM NOT ALREADY RUNNING
+		   			   schedule(SCHEDULE_PRESET,line_pointer,group_pointer) > 0 Then  ' And amount to deliver > 0
+
+						'--- IF MANUAL SELECT = A AND PANEL SELECT = A -------------------
+						If		aux_switches.BIT_HOPPER_MANUAL_SELECT_A = SELECTED  And _
+						   		leds.LED_A_SELECTED_BIT = A_SELECTED_ON Then
+
+							line_pointer_saved = line_pointer			' BACKUP CURRENT SCHEDULE INDEX ('CYCLE')
+							machine_state = 1							' AND START A NEW FEEDING CYCLE
+
+						'--- IF MANUAL SELECT = B BUT <> PANEL SELECT ---------------------------
+						Elseif	aux_switches.BIT_HOPPER_MANUAL_SELECT_B = SELECTED  And _
+						   		leds.LED_B_SELECTED_BIT = B_SELECTED_ON Then 
+
+							line_pointer_saved = line_pointer			' BACKUP CURRENT SCHEDULE INDEX ('CYCLE')
+							machine_state = 1							' AND START A NEW FEEDING CYCLE
+
+						'--- IF MANUAL SELECT <> PANEL SELECT ---------------------------
+						Else
+							Nop											' DO NOT START IF THERE IS A MISMATCH
+
+						Endif
+					Endif
+				Endif
+			Endif
+		Endif
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' END PROGRAM HANDLER
+'===============================================================================
+Sub End_Program_Handler()
+
+		If (special_flags.END_REQ_BIT = 0) Then						'?: END REQUEST ALREADY ISSUED
+			leds.LED_PAUSED_BIT = LED_OFF							'N: NO PAUSING
+			leds.LED_DISPENSER_POWER_BIT = DISPENSER_POWER_OFF		' TURN OFF DISPENSER POWER
+			special_flags.END_REQ_BIT = 1							' END PROGRAM REQUEST
+
+Debug "======END======",Cr
+
+		Endif
+
+End Sub
+
+
+'===============================================================================
+' PAUSE HANDLER
+'===============================================================================
+Sub Pause_Handler()
+
+	If (leds.LED_RUNNING_BIT = RUNNING) Then
+			If ( (leds.LED_PAUSED_BIT = NOT_PAUSED)  And _
+				  (leds.LED_DISPENSER_POWER_BIT = DISPENSER_POWER_ON) )  Then
+
+				line_pointer_saved = line_pointer				'SAVE SCHEDULE POINTER
+				leds.LED_PAUSED_BIT = PAUSED
+				leds.LED_DISPENSER_POWER_BIT = DISPENSER_POWER_OFF
+
+				Save_Schedule_Line_To_EEprom  line_pointer, group_pointer	'UPDATE THE EEPROM VALUES
+
+'Debug"Save & Pause",Cr
+
+			Elseif (leds.LED_PAUSED_BIT = PAUSED)  Then
+
+				line_pointer = line_pointer_saved				'RESTORE SCHEDULE LINE POINTER (INDEX)
+
+				leds.LED_PAUSED_BIT = NOT_PAUSED
+				leds.LED_DISPENSER_POWER_BIT = DISPENSER_POWER_ON
+
+'Debug"Continue",Cr
+
+			Endif
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' INDEX PLUS HANDLER (INCREMENT INDEX, FORMERLY INCREMENT "CYCLES")
+'===============================================================================
+Sub Schedule_Index_Plus_Handler()
+
+	If (switches_asserted.PB_CYCLES_PLUS_BIT = 1) And (setting_mode = 0) Then
+		If (leds.LED_RUNNING_BIT = NOT_RUNNING) Then
+			Incr line_pointer
+
+'Debug"Cycles-1",Cr
+			
+			If (line_pointer > max_location) Then
+				line_pointer = SCHEDULE_LINE_MIN
+		   Endif
+		Elseif ((leds.LED_RUNNING_BIT = RUNNING) And _
+			    (leds.LED_PAUSED_BIT = PAUSED))  Then
+			Incr line_pointer
+
+'Debug"Cycles-2",Cr
+
+			If (line_pointer > max_location) Then
+				line_pointer = SCHEDULE_LINE_MIN
+		    Endif
+		Endif
+
+		switches_asserted.PB_CYCLES_PLUS_BIT = 0
+	Endif
+
+End Sub
+'===============================================================================
+' INDEX MINUS HANDLER (DECREMENT INDEX, EDITED BY ANDREW FOR USING TIME BUTTON AS DECREMENT AND RTC SETTING)
+'===============================================================================
+Sub Schedule_Index_Minus_Handler()
+
+	If (switches_asserted.PB_TIME_BIT) And (switches_asserted.PB_PAUSE_BIT) _
+			And (line_pointer = 0) Then							'WAIT FOR TIME + PAUSE KEY PRESS
+		If setting_mode = 0 Then
+	  		setting_mode = 1
+			leds.LED_TIME_BIT = TIME_MODE_ON         			'TURN ON TIME LED
+		Else
+			setting_mode = 0
+			leds.LED_TIME_BIT = TIME_MODE_OFF
+		Endif
+'Debug "Cycles-5","     SETTING = ", Dec setting_mode, "     TIME Err= ", Dec time_error, Cr
+	Elseif (switches_asserted.PB_TIME_BIT = 1) And (setting_mode = 0) Then
+		If (leds.LED_RUNNING_BIT = NOT_RUNNING) Then
+			Decr line_pointer
+'Debug"Cycles-3",Cr
+			If (line_pointer > max_location) Then
+				line_pointer = max_location
+		   Endif
+		Elseif ((leds.LED_RUNNING_BIT = RUNNING) And _
+			    (leds.LED_PAUSED_BIT = PAUSED))  Then
+			Decr line_pointer
+'Debug"Cycles-4",Cr
+			If (line_pointer > max_location) Then
+				line_pointer = SCHEDULE_LINE_MIN
+		    Endif
+		Endif
+	Endif
+
+		switches_asserted.PB_TIME_BIT  = 0
+
+End Sub
+
+
+
+'===============================================================================
+' HOPPER GROUP HANDLER (A OR B OR NEITHER)
+'===============================================================================
+Sub Hopper_Group_Handler(hgh_select As Byte)
+
+	If (leds.LED_RUNNING_BIT = NOT_RUNNING) Then	'?: FEEDER IS NOT DELIVERING FEED
+	
+		Select Case hgh_select						'Y:	?: SELECT WHICH HOPPER/GROUP
+		'-----------------------------------------------------------------------
+		Case HOPPER_GROUP_SELECT_A						' SELECT HOPPER A AND SCHEDULE GROUP A
+
+			hopper_pointer = HOPPER_A						' HOPPER POINTER = HOPPER A
+			group_pointer  = SCHEDULE_GROUP_A				' SCHEDULE GROUP POINTER = GROUP A
+			leds.LED_B_SELECTED_BIT = LED_OFF				' TURN OFF HOPPER B LED
+			leds.LED_GATE_B_BIT = GATE_CLOSED				' CLOSE GATE B
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+			leds.LED_A_SELECTED_BIT = LED_ON				' HOPPER A LED ON
+			leds.LED_GATE_A_BIT = GATE_OPEN					' OPEN GATE A
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+		'-----------------------------------------------------------------------
+		Case HOPPER_GROUP_SELECT_B						' SELECT HOPPER B AND SCHEDULE GROUP B
+
+			hopper_pointer = HOPPER_B						' HOPPER POINTER = HOPPER B
+			group_pointer  = SCHEDULE_GROUP_B				' SCHEDULE GROUP POINTER = GROUP B
+			leds.LED_A_SELECTED_BIT = LED_OFF				' TURN OFF HOPPER A LED
+			leds.LED_GATE_A_BIT = GATE_CLOSED				' CLOSE GATE A
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+			leds.LED_B_SELECTED_BIT = LED_ON				' HOPPER B LED ON
+			leds.LED_GATE_B_BIT = GATE_OPEN					' OPEN GATE B
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+		'-----------------------------------------------------------------------
+		Case HOPPER_GROUP_SELECT_X						' CLOSE HOPPERS A & B GATES
+
+			Nop												' HOPPER POINTER STAYS THE SAME
+			Nop												' HOPPER GROUP STAYS THE SAME
+			leds.LED_GATE_A_BIT = GATE_CLOSED				' CLOSE GATE A
+			leds.LED_DIVERTER_A_BIT = DIVERTER_CLOSED		' CLOSE DIVERTER A
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+			leds.LED_GATE_B_BIT = GATE_CLOSED				' CLOSE GATE B
+			leds.LED_DIVERTER_B_BIT = DIVERTER_CLOSED		' CLOSE DIVERTER B
+			Nop												' INSTALL WAIT TIME HERE IF NECESSARY
+		'-----------------------------------------------------------------------
+		Case HOPPER_GROUP_SELECT_AB						' TOGGLE BETWEEN HOPPERS AND GROUPS (A/B)
+
+			If aux_switches.BIT_HOPPER_MANUAL_SELECT_A = NOT_SELECTED  And _
+				aux_switches.BIT_HOPPER_MANUAL_SELECT_B = NOT_SELECTED  Then			
+
+				If hopper_pointer = HOPPER_B Then				' ?: HOPPER B PREVIOUSLY SELECTED
+					hopper_pointer = HOPPER_A					' Y: HOPPER POINTER = HOPPER A
+					group_pointer  = SCHEDULE_GROUP_A			'	 SCHEDULE GROUP POINTER TO GROUP A
+					leds.LED_B_SELECTED_BIT = LED_OFF			'	 TURN OFF HOPPER B LED
+					leds.LED_GATE_B_BIT = GATE_CLOSED			'	 CLOSE GATE B
+					Nop											'	 INSTALL WAIT TIME HERE IF NECESSARY
+					leds.LED_A_SELECTED_BIT = LED_ON			'	 TURN ON HOPPER A LED
+					leds.LED_GATE_A_BIT = GATE_CLOSED			'	 CLOSE GATE A
+					Nop											'	 INSTALL WAIT TIME HERE IF NECESSARY
+				Else											' N: (HOPPER A WAS PREVIOUSLY SELECTED)
+					hopper_pointer = HOPPER_B					' Y: HOPPER POINTER = HOPPER B
+					group_pointer  = SCHEDULE_GROUP_B			'	 SCHEDULE GROUP POINTER TO GROUP B
+					leds.LED_A_SELECTED_BIT = LED_OFF			'	 TURN OFF HOPPER A LED
+					leds.LED_GATE_A_BIT = GATE_CLOSED			'	 CLOSE GATE A
+					Nop											'	 INSTALL WAIT TIME HERE IF NECESSARY
+					leds.LED_B_SELECTED_BIT = LED_ON			'	 TURN ON HOPPER B LED
+					leds.LED_GATE_B_BIT = GATE_CLOSED			'	 CLOSE GATE B
+					Nop											'	 INSTALL WAIT TIME HERE IF NECESSARY
+				Endif
+			Endif                                      	
+                                          	
+		'-----------------------------------------------------------------------
+		Case Else
+			Nop
+
+		'-----------------------------------------------------------------------
+		End Select
+
+	Endif
+
+	switches_asserted.PB_SELECT_AB_BIT = 0
+
+	aux_switches_asserted.BIT_HOPPER_MANUAL_SELECT_A = 0
+	aux_switches_released.BIT_HOPPER_MANUAL_SELECT_A = 0
+
+	aux_switches_asserted.BIT_HOPPER_MANUAL_SELECT_B = 0
+	aux_switches_released.BIT_HOPPER_MANUAL_SELECT_B = 0
+
+End Sub
+
+
+'===============================================================================
+' TIME HANDLER
+'===============================================================================
+Sub Time_Handler()				'CALLED WITHIN TIMER_ISR
+
+    Select Case time_state
+	'-------------------------------------------------------------------
+	Case  TSM_WAIT_FOR_TIME_PB_PRESS				'WAIT FOR TIME PB ASSERTION
+
+		leds.LED_TIME_BIT = TIME_MODE_OFF          		'TURN OFF TIME LED
+
+		If (switches_asserted.PB_TIME_BIT) Then			'WAIT FOR FIRST PRESS OF TIME_PB
+        	switches_asserted.PB_TIME_BIT = 0			'TURN OFF PB FLAG
+
+			leds.LED_TIME_BIT = TIME_MODE_ON            'TURN ON TIME LED
+
+			If (leds.LED_RUNNING_BIT = RUNNING) Then
+				time_state = TSM_RUNNING_WAIT_RELEASE		'GO TO THIS STATE IF RUNNING
+			Else
+				time_state = TSM_NOT_RUNNING_WAIT_RELEASE_1	'GO TO THIS STATE IF NOT RUNNING
+			Endif
+        Endif
+
+	'-------------------------------------------------------------------
+	Case  TSM_RUNNING_WAIT_RELEASE						'TIME_PB WAS RELEASED WHILE SYSTEM WAS RUNNING
+
+		time_index = line_pointer
+
+		'SHOW TIMES AND SCHEDULES FOR CURRENT CYCLE BUT NO CHANGES ALLOWED
+
+		If (switches_released.PB_TIME_BIT) Then 		'WAIT FOR TIME_PB TO BE RELEASED
+			switches_released.PB_TIME_BIT = 0			'CLEAR FLAG
+			leds.LED_TIME_BIT = TIME_MODE_OFF       	'TURN OFF TIME LED
+			time_state = TSM_WAIT_FOR_TIME_PB_PRESS		'GO TO STATE WATCHING FOR PB BEING PRESSED AGAIN
+		Endif
+	
+	'-------------------------------------------------------------------
+	Case  TSM_NOT_RUNNING_WAIT_RELEASE_1			'TIME_PB WAS RELEASED WHILE SYSTEM NOT RUNNING
+
+		If (switches_released.PB_TIME_BIT) Then 		'WAIT FOR TIME_PB TO BE RELEASED
+			switches_released.PB_TIME_BIT = 0			'CLEAR FLAG
+			
+			time_state = TSM_NOT_RUNNING_ALLOW_CHANGES	'GO TO STATE ALLOWING TIME/SCHEDULE CHANGES
+		Endif
+
+	'-------------------------------------------------------------------
+	Case  TSM_NOT_RUNNING_ALLOW_CHANGES				'TIME_PB RELEASED & TIME_INDEX=0 & NOT RUNNING
+
+		'ALLOW CHANGES TO TIME OR SCHEDULE DEPENDING ON TIME_INDEX
+		
+		If (switches_asserted.PB_TIME_BIT) Then 		'WAIT FOR TIME_PB TO BE PRESSED
+			switches_asserted.PB_TIME_BIT = 0			'CLEAR FLAG
+			time_state = TSM_NOT_RUNNING_START_SAVING	'GO TO STATE ALLOWING SAVING CHANGES
+		Endif
+
+	'-------------------------------------------------------------------
+	Case  TSM_NOT_RUNNING_START_SAVING				'SET UP TO SAVE TIME/SCHEDULE CHANGES TO EEPROM
+
+		'INITIALIZE VALUES TO START SAVING NEW VALUES INTO EEPROM
+		
+		'WILL SAVE ONE AT A TIME
+        
+		'INITIALIZE POINTER       
+		time_index = SCHEDULE_LINE_MIN
+		
+		time_state = TSM_NOT_RUNNING_FINISH_SAVING
+	   
+	'-------------------------------------------------------------------
+	Case  TSM_NOT_RUNNING_FINISH_SAVING				'SAVE TIME/SCHEDULE CHANGES TO EEPROM
+
+	    'SAVE AN Integer To EEPROM EACH TIME THROUGH THIS STATE UNTIL DONE
+		
+		Incr time_index
+		
+		If time_index > max_location Then
+			time_state = TSM_NOT_RUNNING_WAIT_RELEASE_2	'GO TO THIS STATE WHEN DONE
+		Endif
+
+	'-------------------------------------------------------------------
+	Case  TSM_NOT_RUNNING_WAIT_RELEASE_2			'CHANGES HAVE BEEN SAVED PREPARE TO EXIT TIME_MODE
+
+		If (switches.PB_TIME_BIT = 0) Then 				'WAIT FOR TIME_PB TO BE PRESSED
+	        switches_asserted.PB_TIME_BIT = 0			'CLEAR FLAG
+			switches_released.PB_TIME_BIT = 0			'CLEAR FLAG
+			leds.LED_TIME_BIT = TIME_MODE_OFF			'TIME_MODE LED GOES OFF
+        	time_state = TSM_WAIT_FOR_TIME_PB_PRESS		'GO TO INITIAL STATE
+		Endif
+
+	'-------------------------------------------------------------------
+	Case Else										'EXIT CASE: SOMETHING WENT WRONG
+
+        switches_asserted.PB_TIME_BIT = 0				'CLEAR FLAG
+		switches_released.PB_TIME_BIT = 0				'CLEAR FLAG
+		leds.LED_TIME_BIT = TIME_MODE_OFF				'TIME_MODE LED GOES OFF
+        time_state = TSM_WAIT_FOR_TIME_PB_PRESS			'GO TO INITIAL STATE
+
+	'-------------------------------------------------------------------
+	End Select
+
+End Sub
+
+
+'===============================================================================
+' CLEAR TOTAL HANDLER (USED TO CLEAR VOLUME DAILY TOTAL OR VOLUME GRAND TOTAL)
+'===============================================================================
+' THIS SUBROUTINE HAS TWO FUNCTIONS:
+' (1) CLEASE FEED TOTAL
+' OR
+' (2) IF GRAND_TOTAL PUSHBUTTON IS PRESSED, THEN IT CLEARS GRAND TOTAL
+'-------------------------------------------------------------------------------
+Sub Clear_Total_Handler()
+
+	If (leds.LED_RUNNING_BIT = NOT_RUNNING)  Then
+		If (((time_state = 0) And (setting_mode = 0)) Or (leds.LED_TIME_BIT = TIME_MODE_OFF)) Then
+			If (line_pointer > 0) Then
+				If (switches.PB_GRAND_TOTAL_BIT = PB_PRESSED) Then
+
+					If group_pointer = SCHEDULE_GROUP_B Then
+						grand_total_array(GRAND_TOTAL_B) = 0
+					Else
+						grand_total_array(GRAND_TOTAL_A) = 0
+					Endif
+					
+					Save_Schedule_Line_To_EEprom  line_pointer, group_pointer	' UPDATE THE EEPROM VALUE
+Debug"C ",Cr
+
+				Else
+					schedule(SCHEDULE_TOTAL, line_pointer, group_pointer) = 0
+		
+					Save_Schedule_Line_To_EEprom  line_pointer, group_pointer	' UPDATE THE EEPROM VALUES
+
+				Endif
+			Endif
+		Endif
+	Endif
+
+End Sub
+
+
+'===============================================================================
+' CLEAR DELIVERED HANDLER
+'===============================================================================
+Sub Clear_Delivered_Handler()
+
+	If (leds.LED_RUNNING_BIT = NOT_RUNNING) Then
+		If line_pointer > 0 Then
+			schedule(SCHEDULE_DELIVERED, line_pointer, group_pointer) = 0
+		Endif
+	Endif
+
+End Sub
+
+'===============================================================================
+'===============================================================================
+'===============================================================================

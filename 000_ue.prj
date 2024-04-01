@@ -1,0 +1,45 @@
+[Project ID]
+Signature=UE Proj: v.1
+Unicode=2
+[Project Information]
+	Use Relative Directory=1
+	Relative to Project File=1
+	Include Sub Directories=1
+	Project Tagfile=
+	Project Wordfile=
+	Project TpFile=
+	Filter=
+	Create Tagfile=0
+[Files]
+	0=constants.inc
+	1=dispenser.inc
+	2=variables.inc
+	3=eeprom.inc
+	4=000.cub
+	5=state_machine.bas
+	6=displays.bas
+	7=eeprom.bas
+	8=display.inc
+	9=test.txt
+[FilesW]
+0=constants.inc
+1=dispenser.inc
+2=variables.inc
+3=eeprom.inc
+4=000.cub
+5=state_machine.bas
+6=displays.bas
+7=eeprom.bas
+8=display.inc
+9=test.txt
+[FilesU]
+0=constants.inc
+1=dispenser.inc
+2=eeprom.inc
+3=state+AF8-machine.bas
+4=displays.bas
+5=eeprom.bas
+6=display.inc
+7=all+AF8-variables.inc
+8=m100newsub.bas
+9=000.cub

@@ -1,0 +1,12 @@
+<NotepadPlus>
+    <Project name="000">
+        <File name="constants.def" />
+        <File name="000.cub" />
+        <File name="dispenser.def" />
+        <File name="eeprom.def" />
+        <File name="variables.def" />
+        <File name="eeprom.bas" />
+        <File name="state_machine.bas" />
+        <File name="displays.bas" />
+    </Project>
+</NotepadPlus>

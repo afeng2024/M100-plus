@@ -1,0 +1,101 @@
+=== INITIALIZE FROM EEPROM ===
+GROUP A [RAM] <<< EEPROM
+READING SCHEDULE GROUP A 
+GROUP B [RAM] <<< EEPROM
+READING SCHEDULE GROUP B 
+GROUP A IN [RAM]
+G  Ln  GLINE  START  STOP  PRESET  DELIV  TOTAL
+0   0      0      0     0     700      0   1000
+0   1      0      0     0      10     10     10
+0   2      0      0     0      10     10     20
+0   3      0      0     0      10     10     30
+0   4      0      0     0      10      0      0
+0   5      0      0     0      10      0      0
+0   6      0      0     0      10      0      0
+0   7      0      0     0      10      0      0
+0   8      0      0     0      10      0      0
+0   9      0      0     0      10      0      0
+0  10      0      0     0      10      0      0
+0  11      0      0     0      10      0      0
+0  12      0      0     0      10      0      0
+0  13      0      0     0      10      0      0
+0  14      0      0     0      10      0      0
+0  15      0      0     0      10      0      0
+0  16      0      0     0      10      0      0
+0  17      0      0     0      10      0      0
+0  18      0      0     0      10      0      0
+0  19      0      0     0      10      0      0
+0  20      0      0     0      10      0      0
+0  21      0      0     0      10      0      0
+0  22      0      0     0      10      0      0
+0  23      0      0     0      10      0      0
+0  24      0      0     0      10      0      0
+0  25      0      0     0      10      0      0
+0  26      0      0     0      10      0      0
+0  27      0      0     0      10      0      0
+0  28      0      0     0      10      0      0
+0  29      0      0     0      10      0      0
+0  30      0      0     0      10      0      0
+0  31      0      0     0      10      0      0
+0  32      0      0     0      10      0      0
+GROUP B IN [RAM]
+G  Ln  GLINE  START  STOP  PRESET  DELIV  TOTAL
+1   0      0      0     0     700      0   1000
+1   1      0      0     0      20     20     20
+1   2      0      0     0      20     20     40
+1   3      0      0     0      20     20     60
+1   4      0      0     0      20      0      0
+1   5      0      0     0      20      0      0
+1   6      0      0     0      20      0      0
+1   7      0      0     0      20      0      0
+1   8      0      0     0      20      0      0
+1   9      0      0     0      20      0      0
+1  10      0      0     0      20      0      0
+1  11      0      0     0      20      0      0
+1  12      0      0     0      20      0      0
+1  13      0      0     0      20      0      0
+1  14      0      0     0      20      0      0
+1  15      0      0     0      20      0      0
+1  16      0      0     0      20      0      0
+1  17      0      0     0      20      0      0
+1  18      0      0     0      20      0      0
+1  19      0      0     0      20      0      0
+1  20      0      0     0      20      0      0
+1  21      0      0     0      20      0      0
+1  22      0      0     0      20      0      0
+1  23      0      0     0      20      0      0
+1  24      0      0     0      20      0      0
+1  25      0      0     0      20      0      0
+1  26      0      0     0      20      0      0
+1  27      0      0     0      20      0      0
+1  28      0      0     0      20      0      0
+1  29      0      0     0      20      0      0
+1  30      0      0     0      20      0      0
+1  31      0      0     0      20      0      0
+1  32      0      0     0      20      0      0
+GRAND TOTALS [RAM] <<< [EEPROM]
+GRAND TOTALS IN [RAM]
+GRAND TOTAL A =       60
+GRAND TOTAL B =      120
+
+System Tics Per Second      = 50
+Feed Specific Gravity (I)   = 700
+Feed Specific Gravity (F)   = 0.700
+Feed Delivery Factor (I)    = 1000
+Feed Delivery Factor (F)    = 1.000
+Cubic Feet Per Rotary Valve = 0.0950
+Cubic Feet Per Chamber      = 0.01188
+Kg of Feed Per Chamber      = 0.2354
+Maximum Feed Rate (kg/min)  =  39.9
+Maximum Rotary Valve RPM    = 30.0
+Min Secs Per Indexer_Pulse  =   0.250
+Min Tics Per Indexer Pulse  =  12.5
+Max Secs Per Indexer_Pulse  =  15.000
+Max Tics Per Indexer Pulse  = 750.0
+
+CALCULATE FEED DROPPED PER CHAMBER
+CHAMBER_KG_H20 * 1000 = 336
+* SPECIFIC GRAVITY = 235200
+/ 100 = 2352
+* DELIVERY FACTOR = 2352000
+/ 100 = 23520
